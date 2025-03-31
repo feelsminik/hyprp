@@ -2,5 +2,5 @@
 #include <stdio.h>
 
 void foo(void) {
-	printf("This is a library.\n");
+	printf("This is a library function.\n");
 }

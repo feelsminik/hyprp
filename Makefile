@@ -4,16 +4,27 @@ CFLAGS= -Wall \
 		-Werror \
 		-std=c99 \
 		-ljq
+LIBS= -lhyprp \
+	  -Lbuild
 
-.PHONY: clean
+.PHONY: clean build/hyprp-test test
 
-all: $(PROJECT)
+all: build/hyprp-test
 
-$(PROJECT): build/$(PROJECT).o
-	ar -rc build/lib$@.a build/*.o
+build/hyprp-test: build/hyprp-test.o build/libhyprp.a
+	$(CC) $(CFLAGS) $(LIBS) -o $@ $^
 
-build/%.o: src/%.c include/%.h
-	$(CC) $(CFLAGS)	-o $@ -c $<
+build/hyprp-test.o: test/hyprp-test.c include/hyprp.h
+	$(CC) $(CFLAGS) -o $@ -c $<
+
+build/libhyprp.a: build/hyprp.o
+	ar -rcs $@ $^
+
+build/hyprp.o: src/hyprp.c include/hyprp.h
+	$(CC) $(CFLAGS) -o $@ -c $<
+
+test: build/hyprp-test
+	./build/hyprp-test
 
 clean:
 	rm -rf build/*
