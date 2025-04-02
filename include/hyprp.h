@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <jq.h>
 #include <limits.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,6 +46,12 @@ typedef struct {
 } Clients;
 
 typedef struct {
+  int hypr_r_socket_fd;
+  int write_socket_fd;
+  int read_socket_fd;
+} AsyncIO;
+
+typedef struct {
   Workspaces workspaces;
   SeenWorkspaces seen_workspaces;
   Clients clients;
@@ -64,8 +71,13 @@ typedef struct {
  * ERRORS: If successful returns 0, otherwise returns -1
  */
 
+/*
+ * Undefined behaviour if functions (besides init_hypr_bindings()) are called
+ * with bindings, which haven't been initialized using init_hypr_bindings()
+ */
+
 // Initializes bindings struct by dynamically allocating members,
-// caller is responsible cleanup by calling destroy_hypr_bindings()
+// The caller is responsible cleanup by calling destroy_hypr_bindings()
 int init_hypr_bindings(Bindings *bindings);
 
 // Takes already initialized bindings struct and frees up all dynamically
@@ -74,10 +86,11 @@ int destroy_hypr_bindings(Bindings *bindings);
 
 // Connects to IPC Unix socket exposed by Hyprland and fills up bindings by
 // writing and reading socket
-int get_current_hypr_bindings(Bindings *bindings);
+int get_hypr_bindings(Bindings *bindings);
 
 // Connects to IPC Unix socket and exposes subscribed events by event_mask as a
 // file stream
-int get_current_hypr_events(FILE **stream, int event_mask);
+// The caller is responible for closing the stream
+int get_hypr_event_stream(AsyncIO *io, Bindings *binds, int event_mask);
 
 #endif

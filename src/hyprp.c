@@ -227,14 +227,30 @@ static int open_socket(SocketInfo *sock_info, Bindings *binds) {
 	return 0;
 }
 
+static int open_socket2(SocketInfo *sock_info, Bindings *binds) {
+	sock_info->r_sock_fd = 0;
+	if (con_hypr_sock(binds->sock_dir, sock_info, ".socket2.sock") == -1)
+		return -1;
+
+	sock_info->r_sock = fdopen(sock_info->r_sock_fd, "r");
+	if (sock_info->r_sock == NULL) return -1;
+
+	return 0;
+}
+
 static int close_socket(SocketInfo *sock_info) {
 	if (fclose(sock_info->r_sock) == EOF) return -1;
 	if (fclose(sock_info->w_sock) == EOF) return -1;
 	return 0;
 }
 
-int get_hypr_binding(Bindings *binds, ReadSocketFunc read_socket,
-                     const char *message) {
+static int close_socket2(SocketInfo *sock_info) {
+	if (fclose(sock_info->r_sock) == EOF) return -1;
+	return 0;
+}
+
+static int get_hypr_binding(Bindings *binds, ReadSocketFunc read_socket,
+                            const char *message) {
 	SocketInfo sock_info = {};
 	if (open_socket(&sock_info, binds) == -1) return -1;
 	if (send_sock_msg(sock_info.w_sock, binds, message) == -1) return -1;
@@ -244,7 +260,7 @@ int get_hypr_binding(Bindings *binds, ReadSocketFunc read_socket,
 	return 0;
 }
 
-int get_current_hypr_bindings(Bindings *binds) {
+int get_hypr_bindings(Bindings *binds) {
 	int exit;
 	exit = get_hypr_binding(binds, read_clients, "/clients");
 	if (exit == -1) return -1;
@@ -254,6 +270,49 @@ int get_current_hypr_bindings(Bindings *binds) {
 	if (exit == -1) return -1;
 	exit = get_hypr_binding(binds, read_seen_workspaces, "/monitors");
 	if (exit == -1) return -1;
+
+	return 0;
+}
+
+
+static void *async_io(void *arg) {
+	AsyncIO *io = (AsyncIO *)arg;
+	char buffer[1024] = {0};
+
+	FILE *hypr_socket = fdopen(io->hypr_r_socket_fd, "r");
+	FILE *write_socket = fdopen(io->write_socket_fd, "w");
+	while (fgets(buffer, sizeof(buffer), hypr_socket) != NULL) {
+
+		char *copied_buffer = strdup(buffer);
+		for (char *token = strtok(copied_buffer, ">\n"); token != NULL;
+		     token = strtok(NULL, ">\n")) {
+			if (strncmp(token, "activewindow", BUF_SIZE) == 0) {
+				fprintf(write_socket, "%s", buffer);
+			}
+		}
+		free(copied_buffer);
+		fflush(write_socket);
+	}
+	// FIX: don't return NULL on error?
+	if (ferror(hypr_socket) != 0) return NULL;
+	return NULL;
+}
+
+
+int get_hypr_event_stream(AsyncIO *io, Bindings *binds, int event_mask) {
+	int pipefd[2];
+	if (pipe(pipefd) == -1) return -1;
+
+	SocketInfo sock_info = {};
+	if (get_socket_dir(binds) == -1) return -1;
+	if (open_socket2(&sock_info, binds) == -1) return -1;
+
+	io->hypr_r_socket_fd = sock_info.r_sock_fd;
+	io->write_socket_fd = pipefd[1];
+	io->read_socket_fd = pipefd[0];
+
+	pthread_t thread;
+	if (pthread_create(&thread, NULL, async_io, (void *)io) != 0) return -1;
 
 	return 0;
 }
