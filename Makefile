@@ -2,8 +2,7 @@ CC=gcc
 PROJECT=hyprp
 CFLAGS= -Wall 				\
 		-std=c99 			\
-		-D_XOPEN_SOURCE=700 \
-		-ljq
+		-D_XOPEN_SOURCE=700
 LIBS= -lhyprp \
 	  -Lbuild
 

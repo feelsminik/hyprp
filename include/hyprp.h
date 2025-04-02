@@ -3,10 +3,10 @@
 
 #include <ctype.h>
 #include <errno.h>
-#include <jq.h>
 #include <limits.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,6 +17,22 @@
 #define NUM_WORKSPACES 9
 #define NUM_MONITORS 4
 #define INITIAL_CLIENT_SIZE 128
+
+// clang-format off
+#define ACTIVEWINDOW_EVENT    0b0000000000000001
+#define WINDOWTITLE_EVENT     0b0000000000000010
+#define FOCUSEDMON_EVENT      0b0000000000000100
+#define OPENWINDOW_EVENT      0b0000000000001000
+#define WORKSPACE_EVENT       0b0000000000010000
+#define ALL_EVENTS            0b1111111111111111
+
+#define ACTIVEWINDOW_PREFIX      "activewindow>>"
+#define WINDOWTITLE_PREFIX       "windowtitle>>"
+#define FOCUSEDMON_PREFIX        "focusedmon>>"
+#define OPENWINDOW_PREFIX        "openwindow>>"
+#define WORKSPACE_PREFIX         "workspace>>"
+
+// clang-format on
 
 typedef struct {
   int id;
@@ -48,8 +64,8 @@ typedef struct {
 typedef struct {
   int hypr_r_socket_fd;
   int write_socket_fd;
-  int read_socket_fd;
-} AsyncIO;
+  long events_mask;
+} ThreadData;
 
 typedef struct {
   Workspaces workspaces;
@@ -91,6 +107,8 @@ int get_hypr_bindings(Bindings *bindings);
 // Connects to IPC Unix socket and exposes subscribed events by event_mask as a
 // file stream
 // The caller is responible for closing the stream
-int get_hypr_event_stream(AsyncIO *io, Bindings *binds, int event_mask);
+// Subscribe to selected events only by specifing creating a bitmask
+// If all events should be emitted supply 0 instead.
+int get_hypr_event_stream(int *stream_fd, Bindings *binds, long event_mask);
 
 #endif

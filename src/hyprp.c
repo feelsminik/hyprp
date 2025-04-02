@@ -22,6 +22,30 @@ static int str2int(int *out, char *s, int base) {
 	return 0;
 }
 
+static bool str_prefix(const char *pre, const char *word) {
+	return (strncmp(pre, word, strlen(pre)) == 0);
+}
+
+static int sort_workspaces(const void *w1_p, const void *w2_p) {
+	Workspace w1 = *(const Workspace *)w1_p;
+	Workspace w2 = *(const Workspace *)w2_p;
+
+	int order = 0;
+	if (w1.id < 0) {
+		return 1;
+	} else if (w2.id < 0) {
+		return -1;
+	}
+
+	if (w1.id != w2.id) {
+		order = w1.id - w2.id;
+	} else {
+		order = w1.id - w2.id;
+	}
+
+	return order;
+}
+
 static int get_socket_dir(Bindings *binds) {
 	const char *hypr_sig = getenv("HYPRLAND_INSTANCE_SIGNATURE");
 	if (hypr_sig == NULL) return -1;
@@ -123,6 +147,10 @@ static int parse_clients(char *token, Bindings *bindings) {
 	} else if (strncmp(token, "initialTitle:", BUF_SIZE) == 0) {
 		bindings->clients.items[count].initial_title =
 			strdup(strtok(NULL, DELIMITERS));
+	} else if (strncmp(token, "workspace:", BUF_SIZE) == 0) {
+		int monitor_id = 0;
+		str2int(&monitor_id, strtok(NULL, DELIMITERS), 10);
+		bindings->clients.items[count].workspace_id = monitor_id;
 	}
 	return 0;
 }
@@ -132,9 +160,7 @@ static int parse_workspaces(char *token, Bindings *bindings) {
 	if (strncmp(token, "ID", BUF_SIZE) == 0) {
 		int id = 0;
 		str2int(&id, strtok(NULL, DELIMITERS), 10);
-		if (id > 0) { // normal workspace
-			bindings->workspaces.items[count].id = id;
-		}
+		bindings->workspaces.items[count].id = id;
 	} else if (strncmp(token, "monitorID:", BUF_SIZE) == 0) {
 		int monitor_id = 0;
 		str2int(&monitor_id, strtok(NULL, DELIMITERS), 10);
@@ -244,11 +270,6 @@ static int close_socket(SocketInfo *sock_info) {
 	return 0;
 }
 
-static int close_socket2(SocketInfo *sock_info) {
-	if (fclose(sock_info->r_sock) == EOF) return -1;
-	return 0;
-}
-
 static int get_hypr_binding(Bindings *binds, ReadSocketFunc read_socket,
                             const char *message) {
 	SocketInfo sock_info = {};
@@ -266,6 +287,8 @@ int get_hypr_bindings(Bindings *binds) {
 	if (exit == -1) return -1;
 	exit = get_hypr_binding(binds, read_workspaces, "/workspaces");
 	if (exit == -1) return -1;
+	qsort(binds->workspaces.items, binds->workspaces.count, sizeof(Workspace),
+	      sort_workspaces);
 	exit = get_hypr_binding(binds, read_active_workspace, "/activeworkspace");
 	if (exit == -1) return -1;
 	exit = get_hypr_binding(binds, read_seen_workspaces, "/monitors");
@@ -275,44 +298,68 @@ int get_hypr_bindings(Bindings *binds) {
 }
 
 
-static void *async_io(void *arg) {
-	AsyncIO *io = (AsyncIO *)arg;
+static void match_events(const char *buffer, FILE *write_socket,
+                         long events_mask) {
+	if ((events_mask & ACTIVEWINDOW_EVENT) &&
+	    str_prefix(ACTIVEWINDOW_PREFIX, buffer)) {
+		fprintf(write_socket, "%s", buffer);
+		return;
+	}
+	if ((events_mask & WINDOWTITLE_EVENT) &&
+	    str_prefix(WINDOWTITLE_PREFIX, buffer)) {
+		fprintf(write_socket, "%s", buffer);
+		return;
+	}
+	if ((events_mask & FOCUSEDMON_EVENT) &&
+	    str_prefix(FOCUSEDMON_PREFIX, buffer)) {
+		fprintf(write_socket, "%s", buffer);
+		return;
+	}
+	if ((events_mask & OPENWINDOW_EVENT) &&
+	    str_prefix(OPENWINDOW_PREFIX, buffer)) {
+		fprintf(write_socket, "%s", buffer);
+		return;
+	}
+	if ((events_mask & WORKSPACE_EVENT) &&
+	    str_prefix(WORKSPACE_PREFIX, buffer)) {
+		fprintf(write_socket, "%s", buffer);
+		return;
+	}
+}
+
+static void *filter_events(void *arg) {
+	ThreadData *data = (ThreadData *)arg;
+	long events_mask = data->events_mask;
 	char buffer[1024] = {0};
 
-	FILE *hypr_socket = fdopen(io->hypr_r_socket_fd, "r");
-	FILE *write_socket = fdopen(io->write_socket_fd, "w");
+	FILE *hypr_socket = fdopen(data->hypr_r_socket_fd, "r");
+	FILE *write_socket = fdopen(data->write_socket_fd, "w");
 	while (fgets(buffer, sizeof(buffer), hypr_socket) != NULL) {
-
-		char *copied_buffer = strdup(buffer);
-		for (char *token = strtok(copied_buffer, ">\n"); token != NULL;
-		     token = strtok(NULL, ">\n")) {
-			if (strncmp(token, "activewindow", BUF_SIZE) == 0) {
-				fprintf(write_socket, "%s", buffer);
-			}
-		}
-		free(copied_buffer);
+		match_events(buffer, write_socket, events_mask);
 		fflush(write_socket);
 	}
-	// FIX: don't return NULL on error?
-	if (ferror(hypr_socket) != 0) return NULL;
+	if (ferror(hypr_socket) != 0) return (void *)-1;
+	free(data);
 	return NULL;
 }
 
-
-int get_hypr_event_stream(AsyncIO *io, Bindings *binds, int event_mask) {
+int get_hypr_event_stream(int *stream_fd, Bindings *binds, long events_mask) {
 	int pipefd[2];
 	if (pipe(pipefd) == -1) return -1;
+	*stream_fd = pipefd[0];
 
 	SocketInfo sock_info = {};
 	if (get_socket_dir(binds) == -1) return -1;
 	if (open_socket2(&sock_info, binds) == -1) return -1;
 
+	ThreadData *io = malloc(sizeof(ThreadData));
+	if (io == NULL) return -1;
 	io->hypr_r_socket_fd = sock_info.r_sock_fd;
 	io->write_socket_fd = pipefd[1];
-	io->read_socket_fd = pipefd[0];
+	io->events_mask = events_mask;
 
 	pthread_t thread;
-	if (pthread_create(&thread, NULL, async_io, (void *)io) != 0) return -1;
+	if (pthread_create(&thread, NULL, filter_events, io) != 0) return -1;
 
 	return 0;
 }
