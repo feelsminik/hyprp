@@ -1,8 +1,8 @@
 CC=gcc
 PROJECT=hyprp
-CFLAGS= -Wall \
-		-Werror \
-		-std=c99 \
+CFLAGS= -Wall 				\
+		-std=c99 			\
+		-D_XOPEN_SOURCE=700 \
 		-ljq
 LIBS= -lhyprp \
 	  -Lbuild

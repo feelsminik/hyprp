@@ -1,11 +1,11 @@
 #include "../include/hyprp.h"
-#include <stdio.h>
-
-void test_init(void) {
-	fprintf(stderr, "Initializing tests...\n");
-}
 
 int main(int argc, char *argv[]) {
-	foo();
-	test_init();
+	Bindings bindings = {};
+	init_hypr_bindings(&bindings);
+
+	if (get_current_hypr_bindings(&bindings) == -1) {
+		fprintf(stderr, "We failed.\n");
+	};
+	destroy_hypr_bindings(&bindings);
 }
