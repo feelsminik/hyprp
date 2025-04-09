@@ -14,9 +14,12 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-#define NUM_WORKSPACES 9
+// number of workspaces includes special workspaces
+#define NUM_WORKSPACES 16
+#define NUM_REGULAR_WORKSPACES 9
+#define NUM_SPECIAL_WORKSPACES (NUM_WORKSPACES - NUM_REGULAR_WORKSPACES)
+
 #define NUM_MONITORS 4
-#define INITIAL_CLIENT_SIZE 128
 
 // clang-format off
 #define ACTIVEWINDOW_EVENT    0b0000000000000001
@@ -26,12 +29,14 @@
 #define WORKSPACE_EVENT       0b0000000000010000
 #define ALL_EVENTS            0b1111111111111111
 
-#define ACTIVEWINDOW_PREFIX      "activewindow>>"
-#define WINDOWTITLE_PREFIX       "windowtitle>>"
-#define FOCUSEDMON_PREFIX        "focusedmon>>"
-#define OPENWINDOW_PREFIX        "openwindow>>"
-#define WORKSPACE_PREFIX         "workspace>>"
+#define ACTIVEWINDOW_PREFIX   "activewindow>>"
+#define WINDOWTITLE_PREFIX    "windowtitle>>"
+#define FOCUSEDMON_PREFIX     "focusedmon>>"
+#define OPENWINDOW_PREFIX     "openwindow>>"
+#define WORKSPACE_PREFIX      "workspace>>"
 
+#define CLIENT_ITEM_LEN 64
+#define INITIAL_CLIENTS_SIZE 128
 // clang-format on
 
 typedef struct {
@@ -50,13 +55,19 @@ typedef struct {
 } SeenWorkspaces;
 
 typedef struct {
+  const char *client;
+  char *icon;
+} Symbol;
+
+typedef struct {
   int workspace_id;
-  char *initial_title;
-  char *initial_class;
+  char initial_title[CLIENT_ITEM_LEN];
+  char initial_class[CLIENT_ITEM_LEN];
+  char *icon;
 } Client;
 
 typedef struct {
-  Client *items;
+  Client items[INITIAL_CLIENTS_SIZE];
   size_t count;
   size_t capacity;
 } Clients;

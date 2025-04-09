@@ -1,9 +1,28 @@
 #include "../include/hyprp.h"
+#include <string.h>
 
 // defined in sys/un.h
 #define MAX_SUN_PATH 108
 #define DELIMITERS " \n\t"
 #define BUF_SIZE 1024
+// exclude space as parsed items count as a single token
+#define ITEM_DELIMITERS "\n\t"
+
+// clang-format off
+static Symbol symbols[] = {
+	{.client = "firefox",      .icon = ""},
+	{.client = "obsidian",     .icon = "󰎚"},
+	{.client = "wezterm",      .icon = ""},
+	{.client = "youtube",      .icon = "󰝚"},
+	{.client = "discord",      .icon = ""},
+	{.client = "zathura",      .icon = ""},
+	{.client = "pavucontrol",  .icon = "󰓃"},
+};
+// clang-format on
+
+static size_t symbols_len() {
+	return sizeof(symbols) / sizeof(symbols[0]);
+}
 
 typedef int (*ParserFunc)(char *, Bindings *);
 typedef int (*UpdateBindingFunc)(Bindings *);
@@ -90,19 +109,22 @@ int init_hypr_bindings(Bindings *bindings) {
 
 	bindings->workspaces.count = 0;
 	bindings->seen_workspaces.count = 0;
-	Workspace workspace = {.id = 0, .monitor_id = 0};
-	for (size_t i = 0; i < NUM_WORKSPACES; i++) {
-		bindings->workspaces.items[i] = workspace;
-	}
-	for (size_t i = 0; i < NUM_MONITORS; i++) {
-		bindings->seen_workspaces.items[i] = workspace;
+	Workspace empty_workspace = {.id = 0, .monitor_id = 0};
+	for (size_t i = 1; i <= NUM_WORKSPACES; i++) {
+		if (i <= NUM_REGULAR_WORKSPACES) {
+			Workspace workspace = {.id = i, .monitor_id = 0};
+			bindings->workspaces.items[i] = workspace;
+		} else {
+			bindings->workspaces.items[i] = empty_workspace;
+		}
 	}
 
-	Clients clients = {
-		.count = 0, .capacity = INITIAL_CLIENT_SIZE, .items = NULL};
+	for (size_t i = 0; i < NUM_MONITORS; i++) {
+		bindings->seen_workspaces.items[i] = empty_workspace;
+	}
+
+	Clients clients = {.count = 0, .capacity = INITIAL_CLIENTS_SIZE};
 	bindings->clients = clients;
-	bindings->clients.items = malloc(sizeof(Client) * INITIAL_CLIENT_SIZE);
-	if (bindings->clients.items == NULL) return -1;
 
 	bindings->active_workspace_id = 0;
 
@@ -112,12 +134,6 @@ int init_hypr_bindings(Bindings *bindings) {
 }
 
 int destroy_hypr_bindings(Bindings *bindings) {
-	for (size_t i = 0; i < bindings->clients.count; i++) {
-		Client current_client = bindings->clients.items[i];
-		free(current_client.initial_class);
-		free(current_client.initial_title);
-	}
-	free(bindings->clients.items);
 	free(bindings->sock_dir);
 	return 0;
 }
@@ -139,17 +155,49 @@ static int parse_bindings(FILE *read_sock, Bindings *bindings,
 	return 0;
 }
 
+static int parse_client_item(char *client_item) {
+	char *next_token = strtok(NULL, ITEM_DELIMITERS);
+	if (next_token == NULL) {
+		next_token = "";
+	}
+	strncpy(client_item, next_token, CLIENT_ITEM_LEN);
+	client_item[CLIENT_ITEM_LEN - 1] = '\0';
+	return 0;
+}
+
+static int toLower(char *str) {
+	for (int i = 0; str[i]; i++) {
+		str[i] = tolower(str[i]);
+	}
+	return 0;
+}
+
+static char *parse_client_item_icon(char *client_item) {
+	toLower(client_item);
+	for (size_t i = 0; i < symbols_len(); i++) {
+		if (strstr(client_item, symbols[i].client) != NULL) {
+			return symbols[i].icon;
+		}
+	}
+	return "";
+}
+
 static int parse_clients(char *token, Bindings *bindings) {
 	size_t count = bindings->clients.count;
+	if (count >= (INITIAL_CLIENTS_SIZE - 1)) return -1;
 	if (strncmp(token, "initialClass:", BUF_SIZE) == 0) {
-		bindings->clients.items[count].initial_class =
-			strdup(strtok(NULL, DELIMITERS));
+		char *initial_class = bindings->clients.items[count].initial_class;
+		if (parse_client_item(initial_class) == -1) return -1;
+		bindings->clients.items[count].icon =
+			parse_client_item_icon(initial_class);
 	} else if (strncmp(token, "initialTitle:", BUF_SIZE) == 0) {
-		bindings->clients.items[count].initial_title =
-			strdup(strtok(NULL, DELIMITERS));
+		char *initial_title = bindings->clients.items[count].initial_title;
+		if (parse_client_item(initial_title) == -1) return -1;
+		bindings->clients.items[count].icon =
+			parse_client_item_icon(initial_title);
 	} else if (strncmp(token, "workspace:", BUF_SIZE) == 0) {
 		int monitor_id = 0;
-		str2int(&monitor_id, strtok(NULL, DELIMITERS), 10);
+		if (str2int(&monitor_id, strtok(NULL, DELIMITERS), 10) == -1) return -1;
 		bindings->clients.items[count].workspace_id = monitor_id;
 	}
 	return 0;
@@ -159,11 +207,11 @@ static int parse_workspaces(char *token, Bindings *bindings) {
 	size_t count = bindings->workspaces.count;
 	if (strncmp(token, "ID", BUF_SIZE) == 0) {
 		int id = 0;
-		str2int(&id, strtok(NULL, DELIMITERS), 10);
+		if (str2int(&id, strtok(NULL, DELIMITERS), 10) == -1) return -1;
 		bindings->workspaces.items[count].id = id;
 	} else if (strncmp(token, "monitorID:", BUF_SIZE) == 0) {
 		int monitor_id = 0;
-		str2int(&monitor_id, strtok(NULL, DELIMITERS), 10);
+		if (str2int(&monitor_id, strtok(NULL, DELIMITERS), 10) == -1) return -1;
 		bindings->workspaces.items[count].monitor_id = monitor_id;
 	}
 	return 0;
@@ -174,13 +222,13 @@ static int parse_seen_workspaces(char *token, Bindings *bindings) {
 	// 'workspace:' will match for 'active workspace' and 'special workpace:'
 	if (strncmp(token, "workspace:", BUF_SIZE) == 0) {
 		int id = 0;
-		str2int(&id, strtok(NULL, DELIMITERS), 10);
+		if (str2int(&id, strtok(NULL, DELIMITERS), 10) == -1) return -1;
 		if (id > 0) { // normal workspace
 			bindings->seen_workspaces.items[count].id = id;
 		}
 	} else if (strncmp(token, "ID", BUF_SIZE) == 0) {
 		int monitor_id = 0;
-		str2int(&monitor_id, strtok(NULL, DELIMITERS), 10);
+		if (str2int(&monitor_id, strtok(NULL, DELIMITERS), 10) == -1) return -1;
 		bindings->seen_workspaces.items[count].monitor_id = monitor_id;
 	}
 	return 0;
@@ -189,7 +237,7 @@ static int parse_seen_workspaces(char *token, Bindings *bindings) {
 static int parse_active_workspace(char *token, Bindings *bindings) {
 	if (strncmp(token, "ID", BUF_SIZE) == 0) {
 		int id = 0;
-		str2int(&id, strtok(NULL, DELIMITERS), 10);
+		if (str2int(&id, strtok(NULL, DELIMITERS), 10) == -1) return -1;
 		bindings->active_workspace_id = id;
 	}
 	return 0;
