@@ -37,6 +37,7 @@
 
 #define CLIENT_ITEM_LEN 64
 #define INITIAL_CLIENTS_SIZE 128
+#define CLIENT_ICON_LEN 8
 // clang-format on
 
 typedef struct {
@@ -63,7 +64,7 @@ typedef struct {
   int workspace_id;
   char initial_title[CLIENT_ITEM_LEN];
   char initial_class[CLIENT_ITEM_LEN];
-  char *icon;
+  char icon[CLIENT_ICON_LEN];
 } Client;
 
 typedef struct {
